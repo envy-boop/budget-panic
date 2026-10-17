@@ -1,0 +1,15 @@
+body {
+  margin: 0;
+  overflow: hidden;
+  background:
+    /* market stall awning along the bottom */
+    repeating-linear-gradient(90deg, #ffb703 0 40px, #2a9d8f 40px 80px) bottom / 100% 36px no-repeat,
+    /* soft shadow under the awning */
+    linear-gradient(to top, rgba(0,0,0,.35), transparent 120px),
+    /* floor tiles */
+    linear-gradient(rgba(255,255,255,.06) 2px, transparent 2px) 0 0 / 64px 64px,
+    linear-gradient(90deg, rgba(255,255,255,.06) 2px, transparent 2px) 0 0 / 64px 64px,
+    /* warm glow in the middle */
+    radial-gradient(circle at 50% 40%, #f4d58d, #d98e04)
+}
+canvas { display: block; }
