@@ -40,7 +40,16 @@ You are a shopper in a Nigerian market. Each round gives you a recipe (like Joll
 | P | Pause |
 | M | Sound on/off |
 
-The game is keyboard-only for now.
+### On a phone or tablet
+
+| Touch | What it does |
+| --- | --- |
+| Thumb down anywhere on the floor, then drag | Move. A joystick appears under your thumb; a small push walks, a big push runs |
+| Big button, bottom right | **HAGGLE** when you're next to a gold-ringed item, then **LOCK!** to lock the price |
+| ✕ next to it | Walk away from a haggle |
+| Small buttons, top right | Pause, sound, full screen (where the browser allows it) |
+
+Touch controls switch on by themselves on phones and tablets, and hide again as soon as someone presses a movement key. The game fits both portrait and landscape: on a tall screen the market gets taller instead of squeezed, item names grow so they stay readable, and nothing spawns under the score bar or the buttons. Traders move 10% slower for touch players, because a thumb is less precise than a key.
 
 ## Run it on your computer
 
@@ -96,6 +105,7 @@ index.html     page + three.js import map
 style.css      market floor background
 cover.png      game card picture (1600 x 1000)
 src/game.js    the game
+src/touch.js   phone controls: joystick, HAGGLE/LOCK button, pause/sound/full screen
 src/platform.js    start.ng sign-in
 src/character.js   draws the player's character
 ```
@@ -111,3 +121,5 @@ To update the live game, push your changes to GitHub. start.ng picks them up on 
 ## What was tested
 
 Played through in a simulated browser (menu, haggling, clearing rounds, game over, leaderboard, restart) with no errors. The real start.ng sign-in has to be checked on the live site.
+
+Phone controls were tested with touch emulation at 390 x 844 (portrait) and 844 x 390 (landscape): joystick movement, tapping HAGGLE next to an item, the haggle bar, LOCK!, pause and sound, with no errors. Desktop at 1280 x 720 still plays with the keyboard and shows no touch buttons. Real phones (especially iPhone Safari) still need a quick check on the live site.

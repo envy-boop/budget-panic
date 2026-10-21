@@ -12,4 +12,15 @@ body {
     /* warm glow in the middle */
     radial-gradient(circle at 50% 40%, #f4d58d, #d98e04)
 }
-canvas { display: block; }
+html, body {
+  height: 100%;
+  overscroll-behavior: none;            /* no pull-to-refresh mid-game */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+canvas {
+  display: block;
+  touch-action: none;                    /* the market floor is the joystick */
+}

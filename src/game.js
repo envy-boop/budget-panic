@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { START_NG, getCurrentUser, onUserChange, signIn } from "./platform.js";
 import { buildCharacter } from "./character.js";
+import { createTouchControls, prefersTouch } from "./touch.js";
 
 /* =====================================================================
    BUDGET PANIC
@@ -15,15 +16,41 @@ camera.position.z = 10;
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 document.body.appendChild(renderer.domElement);
 
+// Phones get a closer camera so things aren't tiny, and the camera always
+// fits the SHORT side of the screen. On a tall phone the market becomes tall
+// instead of squeezed thin; on a wide screen it stays as it always was.
+const PHONE_VIEW = 7.5;
+const labelMeshes = [];
+let ppu = 1;            // screen pixels per world unit
+let labelScale = 1;
+let afterResize = () => {};
+
 function resize() {
-  const aspect = window.innerWidth / window.innerHeight;
-  camera.left = -VIEW * aspect; camera.right = VIEW * aspect;
-  camera.top = VIEW; camera.bottom = -VIEW;
+  const w = window.innerWidth, h = window.innerHeight;
+  const aspect = w / h;
+  const half = Math.min(w, h) < 600 ? PHONE_VIEW : VIEW;
+  if (aspect >= 1) {
+    camera.top = half; camera.bottom = -half;
+    camera.left = -half * aspect; camera.right = half * aspect;
+  } else {
+    camera.left = -half; camera.right = half;
+    camera.top = half / aspect; camera.bottom = -half / aspect;
+  }
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(w, h);
+
+  // Keep item names readable: about 10px tall or more on any screen.
+  ppu = h / (camera.top - camera.bottom);
+  labelScale = Math.min(1.7, Math.max(1, 10 / (0.24 * ppu)));
+  labelMeshes.forEach((m) => {
+    m.scale.set(labelScale, labelScale, 1);
+    m.position.y = -0.98 - (labelScale - 1) * 0.25;
+  });
+  afterResize();
 }
 window.addEventListener("resize", resize);
+window.addEventListener("orientationchange", () => setTimeout(resize, 150));
 resize();
 
 // ---------- Small helpers
@@ -89,7 +116,7 @@ function el(cssText, text) {
   if (text != null) d.textContent = text;
   return d;
 }
-const hud = el("position:fixed;top:12px;left:12px;right:12px;color:#fff;font:600 16px system-ui;pointer-events:none;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;text-shadow:0 1px 4px #000;z-index:6");
+const hud = el("position:fixed;top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));right:calc(12px + env(safe-area-inset-right));color:#fff;font:600 16px system-ui;pointer-events:none;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;text-shadow:0 1px 4px #000;z-index:6");
 const banner = el("position:fixed;top:78px;left:50%;transform:translateX(-50%);display:none;color:#fff;font:700 15px system-ui;padding:6px 14px;border-radius:999px;background:rgba(0,0,0,.55);pointer-events:none;z-index:6;white-space:nowrap");
 const msg = el("position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font:700 24px system-ui;text-align:center;pointer-events:none;text-shadow:0 2px 8px #000;z-index:6");
 const hint = el("position:fixed;left:50%;bottom:34px;transform:translateX(-50%);display:none;color:#fff;font:700 16px system-ui;padding:8px 16px;border-radius:12px;background:rgba(0,0,0,.6);pointer-events:none;z-index:6;white-space:nowrap");
@@ -104,7 +131,8 @@ const hagYellow = el("position:absolute;top:0;bottom:0;background:#ffd166aa");
 const hagGreen = el("position:absolute;top:0;bottom:0;background:#7dff9a");
 const hagMarker = el("position:absolute;top:-2px;bottom:-2px;width:6px;border-radius:3px;background:#fff;transform:translateX(-50%)");
 hagBar.append(hagYellow, hagGreen, hagMarker);
-hag.append(hagTitle, hagBar, el("margin-top:6px;font-size:12px;opacity:.8", "Press SPACE to lock the price · ESC to walk away"));
+const hagHelp = el("margin-top:6px;font-size:12px;opacity:.8", "Press SPACE to lock the price · ESC to walk away");
+hag.append(hagTitle, hagBar, hagHelp);
 
 document.body.append(rainLayer, darkLayer, hud, banner, msg, hint, hag, ui);
 
@@ -147,10 +175,12 @@ function labelMesh(text) {
   g.fillText(text, 128, 34);
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  return new THREE.Mesh(
+  const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(1.8, 0.45),
     new THREE.MeshBasicMaterial({ map: tex, transparent: true })
   );
+  labelMeshes.push(mesh);
+  return mesh;
 }
 
 function toScreen(x, y) {
@@ -266,9 +296,10 @@ function showScreen(info) {
   ui.append(el("font-size:15px;opacity:.85", `Your best: ${best} pts`));
 
   if (!over) {
-    ui.append(el("font-size:13px;opacity:.65;max-width:360px;line-height:1.5",
-      "WASD / arrows to move · stand near a gold-ringed item and press SPACE to haggle · P pause · M sound"));
-  } else {
+    ui.append(el("font-size:13px;opacity:.65;max-width:360px;line-height:1.5", touch.enabled
+      ? "Put your thumb down anywhere and drag to move · tap HAGGLE near a gold-ringed item, then LOCK! to lock the price"
+      : "WASD / arrows to move · stand near a gold-ringed item and press SPACE to haggle · P pause · M sound"));
+  } else if (!touch.enabled) {
     ui.append(el("font-size:13px;opacity:.6", "Space = play again"));
   }
 }
@@ -367,13 +398,25 @@ const POWERS = [
   { id: "cash", emoji: "💰", color: "#7dff9a", name: "+₦4,000" },
 ];
 
+// The part of the screen you can actually play in: below the score bar and,
+// on phones, above the action button. Updated every frame in drawHud().
+let topReserve = 2, bottomReserve = 1.8;
+
 function randomPos(g, minD = 3) {
-  const mx = camera.right - 1.2, my = camera.top - 2.2;
-  for (let n = 0; n < 40; n++) {
-    g.position.set((Math.random() * 2 - 1) * mx, (Math.random() * 2 - 1) * my, g.position.z);
-    if (dist2(g, player) >= minD) break;
+  const mx = camera.right - 1.2;
+  let yLo = camera.bottom + bottomReserve + 1.6;
+  let yHi = camera.top - topReserve - 0.9;
+  if (yHi - yLo < 4) { yLo = camera.bottom + 2.2; yHi = camera.top - 2.2; }
+  // Keep a bit of space between stalls so the market never looks piled up.
+  const others = items.filter((o) => o !== g && o.visible);
+  let spacing = 2.4;
+  for (let n = 0; n < 60; n++) {
+    if (n === 40) spacing = 1.6; // crowded screen: accept a tighter fit
+    g.position.set((Math.random() * 2 - 1) * mx, yLo + Math.random() * (yHi - yLo), g.position.z);
+    if (dist2(g, player) >= minD && others.every((o) => dist2(g, o) >= spacing)) break;
   }
 }
+const playerMaxY = () => camera.top - topReserve - PLAYER_RADIUS * 0.6;
 
 const items = CATALOG.map((c, i) => {
   const g = new THREE.Group();
@@ -382,7 +425,7 @@ const items = CATALOG.map((c, i) => {
   ring.visible = false;
   g.add(ring);
   const e = emojiMesh(c.emoji, 0.9); e.position.z = 0.01; g.add(e);
-  const lab = labelMesh(c.name); lab.position.set(0, -0.98, 0.02); g.add(lab);
+  const lab = labelMesh(c.name); lab.position.set(0, -0.98 - (labelScale - 1) * 0.25, 0.02); lab.scale.set(labelScale, labelScale, 1); g.add(lab);
   g.position.z = 0.1;
   g.visible = false;
   g.userData = { i, ring, active: false };
@@ -618,36 +661,100 @@ function drawHud() {
     darkLayer.style.background = `radial-gradient(circle at ${p.x}px ${p.y}px, transparent 0, transparent 90px, rgba(5,3,12,.94) 230px)`;
   } else darkLayer.style.display = "none";
 
-  if (state === "playing" && !haggle) {
-    const g = nearbyListItem();
-    if (g) { hint.textContent = `SPACE — haggle for ${CATALOG[g.userData.i].emoji} ${CATALOG[g.userData.i].name}`; hint.style.display = "block"; }
-    else hint.style.display = "none";
+  const near = state === "playing" && !haggle ? nearbyListItem() : null;
+  if (near) {
+    const it = CATALOG[near.userData.i];
+    hint.textContent = touch.enabled ? `Tap HAGGLE for ${it.emoji} ${it.name}` : `SPACE — haggle for ${it.emoji} ${it.name}`;
+    hint.style.display = "block";
   } else hint.style.display = "none";
+
+  // ---- fit everything around the score bar and the touch controls
+  const narrow = window.innerWidth < 520;
+  hud.style.fontSize = narrow ? "13px" : "16px";
+  const hudBottom = hud.getBoundingClientRect().bottom;
+  const controlsTop = hudBottom + 8;               // small touch buttons sit here
+  const freeTop = touch.enabled && (state === "playing" || state === "paused") ? controlsTop + 48 : hudBottom;
+  banner.style.top = `${freeTop + 6}px`;
+  topReserve = (freeTop + 8) / ppu;
+  bottomReserve = (touch.enabled ? touch.bottomSpace : 40) / ppu;
+  hint.style.bottom = touch.enabled ? "150px" : "34px";
+  hag.style.bottom = touch.enabled ? "150px" : "90px";
+  hagHelp.textContent = touch.enabled ? "Tap LOCK! to lock the price · ✕ to walk away" : "Press SPACE to lock the price · ESC to walk away";
+
+  touch.update({
+    mode: haggle ? "lock" : near ? "haggle" : "idle",
+    playing: state === "playing" || state === "paused",
+    paused: state === "paused",
+    topOffset: controlsTop,
+  });
 }
 
 // ---------- Input
 const keys = {};
 function togglePause() {
-  if (state === "playing") { state = "paused"; msg.style.color = "#fff"; msg.textContent = "Paused — press P"; }
+  if (state === "playing") { state = "paused"; msg.style.color = "#fff"; msg.textContent = touch.enabled ? "Paused — tap ▶" : "Paused — press P"; }
   else if (state === "paused") { state = "playing"; msg.textContent = ""; }
 }
+function toggleMute() {
+  muted = !muted;
+  store.set("budgetpanic:muted", muted ? "1" : "0");
+}
+// Space on a keyboard, the big button on a phone
+function action() {
+  ensureAudio();
+  if (state === "over") start();
+  else if (state === "playing") {
+    if (haggle) lockHaggle();
+    else { const g = nearbyListItem(); if (g) openHaggle(g); }
+  }
+}
+function toggleFullscreen() {
+  const d = document, root = d.documentElement;
+  if (d.fullscreenElement || d.webkitFullscreenElement) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  else (root.requestFullscreen || root.webkitRequestFullscreen).call(root);
+}
+
+const touch = createTouchControls({
+  canAct: () => state === "playing",
+  onAction: action,
+  onWalkAway: () => cancelHaggle(true),
+  onPause: togglePause,
+  onMute: toggleMute,
+  onFullscreen: toggleFullscreen,
+  isMuted: () => muted,
+});
+touch.enable(prefersTouch());
+
+const MOVE_KEYS = ["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"];
 window.addEventListener("keydown", (e) => {
   ensureAudio();
   const k = e.key.toLowerCase();
   if ((state === "playing" || state === "paused") && ["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(k)) e.preventDefault();
+  if (MOVE_KEYS.includes(k)) touch.enable(false); // keyboard player: hide the touch buttons
   keys[k] = true;
   if (e.repeat) return;
   if (k === " ") {
-    if (state === "over") { e.preventDefault(); start(); }
-    else if (state === "playing") {
-      if (haggle) lockHaggle();
-      else { const g = nearbyListItem(); if (g) openHaggle(g); }
-    }
+    if (state === "over") e.preventDefault();
+    action();
   } else if (k === "escape") cancelHaggle(true);
   else if (k === "p") togglePause();
-  else if (k === "m") { muted = !muted; store.set("budgetpanic:muted", muted ? "1" : "0"); }
+  else if (k === "m") toggleMute();
 });
 window.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
+
+// When the phone rotates, pull anything that is now off screen back in.
+afterResize = () => {
+  const mx = camera.right - 1.2;
+  items.forEach((g) => {
+    if (!g.visible) return;
+    if (Math.abs(g.position.x) > mx || g.position.y > camera.top - topReserve - 0.9 || g.position.y < camera.bottom + bottomReserve + 1.2) randomPos(g, 2);
+  });
+  traders.forEach((t) => {
+    t.position.x = Math.max(-(camera.right - 0.5), Math.min(camera.right - 0.5, t.position.x));
+    t.position.y = Math.max(camera.bottom + 0.5, Math.min(playerMaxY(), t.position.y));
+  });
+  if (power) randomPos(power.g, 2);
+};
 
 // ---------- Main loop
 const BASE_SPEED = 9;
@@ -664,7 +771,9 @@ function loop(time) {
     if (keys["d"] || keys["arrowright"]) ix += 1;
     if (keys["w"] || keys["arrowup"]) iy += 1;
     if (keys["s"] || keys["arrowdown"]) iy -= 1;
-    const len = Math.hypot(ix, iy) || 1;
+    // no keys held: use the touch joystick (analog, so a small push walks slowly)
+    if (!ix && !iy && (touch.vector.x || touch.vector.y)) { ix = touch.vector.x; iy = touch.vector.y; }
+    const len = Math.max(1, Math.hypot(ix, iy));
     const slippery = event && event.id === "rain";
     const ease = 1 - Math.pow(slippery ? 0.02 : 0.0001, dt);
     const speed = speedT > 0 ? BASE_SPEED * 1.6 : BASE_SPEED;
@@ -672,9 +781,9 @@ function loop(time) {
     velocity.y += ((iy / len) * speed - velocity.y) * ease;
     player.position.x += velocity.x * dt;
     player.position.y += velocity.y * dt;
-    const maxX = camera.right - PLAYER_RADIUS, maxY = camera.top - PLAYER_RADIUS;
+    const maxX = camera.right - PLAYER_RADIUS;
     player.position.x = Math.max(-maxX, Math.min(maxX, player.position.x));
-    player.position.y = Math.max(-maxY, Math.min(maxY, player.position.y));
+    player.position.y = Math.max(camera.bottom + PLAYER_RADIUS, Math.min(playerMaxY(), player.position.y));
 
     if (speedT > 0) { speedT -= dt; if (Math.random() < 0.5) burst(player.position.x, player.position.y, 0xffe66d, 1, 1.5); }
 
@@ -751,9 +860,10 @@ function loop(time) {
       const d = Math.hypot(dx, dy) || 1;
       let dirx = dx / d, diry = dy / d;
       if (t.userData.flee > 0) { t.userData.flee -= dt; dirx = -dirx; diry = -diry; }
-      const sp = (T.speed + round * T.grow) * (haggle ? 0.5 : 1);
+      // touch players get traders 10% slower: a thumb is less precise than a key
+      const sp = (T.speed + round * T.grow) * (haggle ? 0.5 : 1) * (touch.enabled ? 0.9 : 1);
       t.position.x = Math.max(-(camera.right - 0.5), Math.min(camera.right - 0.5, t.position.x + dirx * sp * dt));
-      t.position.y = Math.max(-(camera.top - 0.5), Math.min(camera.top - 0.5, t.position.y + diry * sp * dt));
+      t.position.y = Math.max(camera.bottom + 0.5, Math.min(playerMaxY(), t.position.y + diry * sp * dt));
       if (d < PLAYER_RADIUS + T.r && hitCooldown <= 0 && t.userData.flee <= 0) hitPlayer(t, dx / d, dy / d);
     });
 
@@ -825,4 +935,4 @@ async function init() {
     else applyUser(u);
   });
 }
-init();
+init();
