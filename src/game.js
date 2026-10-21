@@ -290,10 +290,17 @@ function showScreen(info) {
   ui.append(el("font-size:20px", me === GUEST ? "Playing as Guest" : `Welcome, ${me.name}!`));
   if (!START_NG) ui.append(el("font-size:14px;opacity:.75;max-width:320px", "Sign-in isn't available here, so you're playing as a guest."));
 
+  if (over) ui.append(btn("Share on X", () => shareResult(info), false));
   if (me === GUEST && START_NG) ui.append(btn("Sign in with start.ng", signIn, true));
   ui.append(btn(over ? "Play again" : me === GUEST ? "Play as guest" : "Play", start, me !== GUEST || !START_NG));
   ui.append(btn("🏆 Leaderboard", showBoard, false));
   ui.append(el("font-size:15px;opacity:.85", `Your best: ${best} pts`));
+
+  const back = document.createElement("a");
+  back.href = "https://start.ng";
+  back.textContent = "Play more games on start.ng";
+  back.style.cssText = "color:#ffd166;font-size:15px;font-weight:700;text-decoration:underline;margin-top:4px";
+  ui.append(back);
 
   if (!over) {
     ui.append(el("font-size:13px;opacity:.65;max-width:360px;line-height:1.5", touch.enabled
@@ -302,6 +309,16 @@ function showScreen(info) {
   } else if (!touch.enabled) {
     ui.append(el("font-size:13px;opacity:.6", "Space = play again"));
   }
+}
+
+// Share the result on X (a start.ng game standard)
+function shareResult(info) {
+  const meals = info.rounds === 1 ? "1 meal" : `${info.rounds} meals`;
+  const text = info.rounds > 0
+    ? `I cooked ${meals} and scored ${info.score} on Budget Panic before the market finished my money 😭 Can you beat me? @playonstartng`
+    : `The market finished my ₦25,000 before I could cook anything on Budget Panic 😭 Can you do better? @playonstartng`;
+  const url = "https://start.ng/games/budget-panic";
+  window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`, "_blank", "noopener");
 }
 
 function showBoard() {
