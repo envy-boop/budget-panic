@@ -229,6 +229,13 @@ const shieldRing = new THREE.Mesh(
 shieldRing.position.z = 0.2;
 shieldRing.visible = false;
 player.add(shieldRing);
+const policeRing = new THREE.Mesh(
+  new THREE.RingGeometry(1.45, 1.62, 48),
+  new THREE.MeshBasicMaterial({ color: 0x3b82ff, transparent: true, opacity: 0.95 })
+);
+policeRing.position.z = 0.2;
+policeRing.visible = false;
+player.add(policeRing);
 
 // ---------- Who is playing + scores
 const GUEST = { id: "guest", name: "Guest", style: null };
@@ -401,11 +408,12 @@ const TRADERS = {
 function composition(r) {
   const t = ["grunt", "grunt"];
   if (r >= 1) t.push("sprinter");
-  if (r >= 2) t.push("tank");
+  // One new kind of trader at a time, so the market never gets crowded all at once.
   if (r >= 3) t.push("pickpocket");
-  if (r >= 4) t.push("grunt");
-  if (r >= 5) t.push("sprinter");
-  if (r >= 6) t.push("tank");
+  if (r >= 4) t.push("tank");
+  if (r >= 5) t.push("grunt");
+  if (r >= 6) t.push("sprinter");
+  if (r >= 7) t.push("tank");
   return t;
 }
 
@@ -413,11 +421,30 @@ const POWERS = [
   { id: "speed", emoji: "⚡", color: "#ffe66d", name: "Sharp sharp! Speed up" },
   { id: "shield", emoji: "🛡️", color: "#5ee7ff", name: "Shield ready" },
   { id: "cash", emoji: "💰", color: "#7dff9a", name: "+₦4,000" },
+  // Only appears while a pickpocket is in the market.
+  { id: "taskforce", emoji: "👮", color: "#4d9dff", name: "Task force! Catch the pickpockets" },
 ];
+const TASKFORCE_TIME = 8;
 
-// The part of the screen you can actually play in: below the score bar and,
-// on phones, above the action button. Updated every frame in drawHud().
+// Features arrive one round at a time (round numbers here start at 0).
+const FEATURES = {
+  movingPrices: 1, // round 2
+  mamaCalls: 2,    // round 3
+  events: 2,       // round 3
+  pickpockets: 3,  // round 4
+};
+const FEATURE_NOTES = {
+  1: "New: prices now move. ▲ is going up, ▼ is coming down. Buy on the ▼.",
+  2: "New: Mama may call with one more thing to buy, and market events like NEPA and fuel hikes start.",
+  3: "New: pickpockets 🥷 They steal and run. Grab the 👮 task force to catch them and get your money back.",
+};
+
+// The part of the screen you can actually play in: below the score bar and
+// clear of the phone buttons. Updated every frame in drawHud().
 let topReserve = 2, bottomReserve = 1.8;
+let noGo = []; // world-space boxes over the phone buttons, where nothing spawns
+
+const inNoGo = (x, y) => noGo.some((z) => x > z.x0 - 1 && x < z.x1 + 1 && y > z.y0 - 1 && y < z.y1 + 1);
 
 function randomPos(g, minD = 3) {
   const mx = camera.right - 1.2;
@@ -426,10 +453,12 @@ function randomPos(g, minD = 3) {
   if (yHi - yLo < 4) { yLo = camera.bottom + 2.2; yHi = camera.top - 2.2; }
   // Keep a bit of space between stalls so the market never looks piled up.
   const others = items.filter((o) => o !== g && o.visible);
-  let spacing = 2.4;
-  for (let n = 0; n < 60; n++) {
-    if (n === 40) spacing = 1.6; // crowded screen: accept a tighter fit
+  let spacing = 3;
+  for (let n = 0; n < 100; n++) {
+    if (n === 40) spacing = 2.3; // crowded screen: accept a tighter fit
+    if (n === 70) spacing = 1.7;
     g.position.set((Math.random() * 2 - 1) * mx, yLo + Math.random() * (yHi - yLo), g.position.z);
+    if (inNoGo(g.position.x, g.position.y)) continue;
     if (dist2(g, player) >= minD && others.every((o) => dist2(g, o) >= spacing)) break;
   }
 }
@@ -459,7 +488,7 @@ function makeTrader(type) {
   m.userData = { type, flee: 0 };
   scene.add(m);
   traders.push(m);
-  randomPos(m, 4);
+  randomPos(m, 5); // start traders well away from the shopper
 }
 function spawnTraders() {
   traders.forEach((t) => scene.remove(t));
@@ -468,8 +497,17 @@ function spawnTraders() {
 }
 
 let power = null;
+let taskforceGiven = false; // at most one task force per round
 function spawnPower() {
-  const P = POWERS[Math.floor(Math.random() * POWERS.length)];
+  const pickpocketHere = traders.some((t) => t.userData.type === "pickpocket");
+  let P;
+  if (pickpocketHere && !taskforceGiven && Math.random() < 0.6) {
+    P = POWERS.find((x) => x.id === "taskforce");
+    taskforceGiven = true;
+  } else {
+    const pool = POWERS.filter((x) => x.id !== "taskforce");
+    P = pool[Math.floor(Math.random() * pool.length)];
+  }
   const g = new THREE.Group();
   g.add(new THREE.Mesh(new THREE.CircleGeometry(0.55, 48), new THREE.MeshBasicMaterial({ color: 0x1d1626 })));
   g.add(new THREE.Mesh(new THREE.RingGeometry(0.55, 0.68, 48), new THREE.MeshBasicMaterial({ color: new THREE.Color(P.color) })));
@@ -490,16 +528,23 @@ let mamaQueue = [], mamaTimer = 16;
 let hitCooldown = 0, state = "menu", flashTimer;
 let event = null, eventT = 0, lastEvent = null;
 let speedT = 0, shield = 0, powerTimer = 6;
+let taskT = 0;   // seconds of task force left
+let stolen = 0;  // what pickpockets took this round (the task force gets it back)
 let haggle = null;
 
 // Phase 2: moving prices. Each item drifts up or down while you shop.
 const drift = CATALOG.map(() => 1);
 const trend = CATALOG.map(() => 1);
 let driftT = 0;
+const pricesMove = () => round >= FEATURES.movingPrices;
 function resetDrift() {
-  CATALOG.forEach((_, i) => { drift[i] = 0.9 + Math.random() * 0.25; trend[i] = Math.random() < 0.5 ? -1 : 1; });
+  CATALOG.forEach((_, i) => {
+    if (!pricesMove()) { drift[i] = 1; trend[i] = 0; return; } // round 1: fixed prices, no arrows
+    drift[i] = 0.9 + Math.random() * 0.25; trend[i] = Math.random() < 0.5 ? -1 : 1;
+  });
 }
 function tickDrift() {
+  if (!pricesMove()) return;
   CATALOG.forEach((_, i) => {
     if (Math.random() < 0.35) trend[i] = Math.random() < 0.5 ? -1 : 1;
     drift[i] = Math.max(0.7, Math.min(1.6, drift[i] * (1 + trend[i] * (0.04 + Math.random() * 0.06))));
@@ -516,31 +561,99 @@ function flash(text, color) {
 
 function pickEvent() {
   event = null; saleMult = 1; inflationBase = 1; eventT = 0;
-  if (round < 1 || Math.random() > 0.75) return;
+  if (round < FEATURES.events || Math.random() > 0.75) return;
   const pool = EVENTS.filter((e) => e.id !== lastEvent);
   event = pool[Math.floor(Math.random() * pool.length)];
   lastEvent = event.id;
   if (event.id === "fuel") inflationBase = 1.25;
   if (event.id === "sale") { saleMult = 0.5; eventT = 12; }
-  popup(event.label, 0, 3, event.color, 22);
+  // (the event is announced on the recipe screen and in the banner)
 }
 
-function newRound() {
+// ---------- Choosing what to cook
+// Every round the player picks their recipe from the ones for that level,
+// with the ingredients and roughly what it will cost.
+let choices = [];
+let lastCooked = null;
+const recipeCost = (r) => Math.round(r.items.reduce((s, n) => s + CATALOG[N[n]].price * inflationBase * saleMult, 0) / 50) * 50;
+
+function newRound(cooked) {
   cancelHaggle(false);
   pickEvent();
-
-  // Phase 1: pick a recipe for this round
   const tier = round < 2 ? 0 : round < 4 ? 1 : 2;
-  const pool = RECIPES.filter((r) => r.tier === tier && r !== recipe);
-  recipe = pool[Math.floor(Math.random() * pool.length)];
+  choices = RECIPES.filter((r) => r.tier === tier && r !== recipe);
+  if (choices.length > 3) choices = shuffle(choices).slice(0, 3);
+  lastCooked = cooked || null;
+  setupRound(choices[0]);   // the market fills in behind the menu
+  state = "choosing";
+  showChooser();
+}
+
+function showChooser() {
+  ui.replaceChildren();
+  ui.style.display = "flex";
+  if (lastCooked) ui.append(el("font-size:22px;font-weight:800;color:#7dff9a", `${lastCooked.emoji} ${lastCooked.name} done! +${fmt(ROUND_BONUS)} 💪`));
+  ui.append(el("font-size:28px;font-weight:800", `Round ${round + 1}: what are you cooking?`));
+  ui.append(el("font-size:16px;opacity:.8", `You have ${fmt(Math.max(budget, 0))}`));
+  const note = FEATURE_NOTES[round];
+  if (note) ui.append(el("font-size:15px;max-width:380px;line-height:1.45;padding:10px 14px;border-radius:12px;background:#ffd16622;border:1px solid #ffd16688;color:#ffd166", note));
+  if (event) ui.append(el(`font-size:15px;color:${event.color}`, event.label));
+  // Phones get compact side-by-side cards so all the choices fit on one screen.
+  const narrow = window.innerWidth < 600;
+  const row = el(`display:flex;flex-wrap:wrap;gap:${narrow ? 10 : 12}px;justify-content:center;max-width:760px;width:100%`);
+  choices.forEach((r, k) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.style.cssText = "font:600 15px system-ui;color:#fff;background:#ffffff1a;border:2px solid #ffffff40;border-radius:16px;cursor:pointer;" +
+      (narrow
+        ? "width:100%;max-width:360px;padding:10px 14px;display:grid;grid-template-columns:44px 1fr;column-gap:12px;row-gap:3px;align-items:center;text-align:left"
+        : "padding:14px 16px;width:220px;display:flex;flex-direction:column;gap:8px;align-items:center");
+    const meta = `${r.items.length} items · about ${fmt(recipeCost(r))}`;
+    if (narrow) {
+      b.append(
+        el("font-size:34px;grid-row:span 3;text-align:center", r.emoji),
+        el("font-size:17px;font-weight:800", r.name),
+        el("font-size:19px;letter-spacing:1px", r.items.map((n) => CATALOG[N[n]].emoji).join("")),
+        el("font-size:13px;opacity:.85", `${meta} · tap to cook`),
+      );
+    } else {
+      b.append(
+        el("font-size:34px", r.emoji),
+        el("font-size:17px;font-weight:800", r.name),
+        el("font-size:22px;letter-spacing:2px", r.items.map((n) => CATALOG[N[n]].emoji).join("")),
+        el("font-size:14px;opacity:.85", meta),
+        el("font-size:12px;opacity:.6", touch.enabled ? "Tap to cook" : `Press ${k + 1}`),
+      );
+    }
+    b.onclick = () => chooseRecipe(k);
+    row.append(b);
+  });
+  ui.append(row);
+}
+
+function chooseRecipe(k) {
+  if (state !== "choosing" || !choices[k]) return;
+  ensureAudio();
+  if (choices[k] !== recipe) setupRound(choices[k]);
+  ui.style.display = "none";
+  state = "playing";
+  if (round === FEATURES.pickpockets) popup("Watch your pocket 🥷", 0, 3, "#ff9f1c", 22);
+}
+
+function setupRound(chosen) {
+  recipe = chosen;
   const ids = recipe.items.map((n) => N[n]);
   list = ids.map((i) => ({ i, done: false }));
 
-  // Only the recipe items plus a few decoys appear on the map
+  // Only the recipe items plus a few decoys appear on the map. Fewer decoys on
+  // small screens, so the market never feels packed.
   const rest = shuffle(CATALOG.map((_, i) => i).filter((i) => !ids.includes(i)));
-  const decoyCount = Math.min(2 + Math.floor(round / 2), 6);
+  const area = (camera.right - camera.left) * (camera.top - camera.bottom - topReserve - bottomReserve);
+  const room = Math.max(1, Math.floor(area / 22) - ids.length);
+  const decoyCount = Math.min(1 + Math.floor(round / 2), 5, room);
   const decoys = rest.slice(0, decoyCount);
-  mamaQueue = shuffle(rest).slice(0, 2);
+  mamaQueue = round >= FEATURES.mamaCalls ? shuffle(rest).slice(0, 2) : [];
+  taskT = 0; stolen = 0; taskforceGiven = false;
 
   items.forEach((g) => { g.userData.active = false; g.visible = false; });
   [...ids, ...decoys].forEach((i) => {
@@ -559,6 +672,7 @@ const velocity = new THREE.Vector2(0, 0);
 function reset() {
   budget = START_BUDGET; score = 0; round = 0; hitCooldown = 0; state = "playing";
   speedT = 0; shield = 0; powerTimer = 6; lastEvent = null; recipe = null;
+  taskT = 0; stolen = 0;
   clearPower();
   player.position.set(0, 0, 0.5);
   velocity.set(0, 0);
@@ -644,6 +758,7 @@ function hitPlayer(t, nx, ny) {
     sfx.block();
   } else {
     budget -= T.dmg;
+    if (!T.push) stolen += T.dmg; // the task force can get this back
     popup(T.push ? `-${fmt(T.dmg)}` : `Pickpocketed! -${fmt(T.dmg)}`, player.position.x, player.position.y + 1, "#ff6b6b", 22);
     burst(player.position.x, player.position.y, 0xff4d4d, 12, 6);
     shake = Math.max(shake, T.push ? 0.5 : 0.25);
@@ -652,13 +767,27 @@ function hitPlayer(t, nx, ny) {
   if (!T.push) t.userData.flee = 2.5;
 }
 
+// The task force catches a pickpocket: it's gone for the round and the money comes back.
+function arrest(t) {
+  t.userData.arrested = true;
+  scene.remove(t);
+  const back = stolen;
+  stolen = 0;
+  budget += back;
+  score += 50;
+  popup(back ? `Arrested! 👮 Got back ${fmt(back)}` : "Arrested! 👮 +50", t.position.x, t.position.y + 1, "#ffffff", 24);
+  burst(t.position.x, t.position.y, 0x4d9dff, 12, 6);
+  burst(t.position.x, t.position.y, 0xff4d4d, 10, 5);
+  sfx.great();
+}
+
 // ---------- HUD drawing
 function drawHud() {
   const listHtml = list.map((l) => {
-    const arrow = trend[l.i] > 0 ? ' <span style="color:#ff8a80">▲</span>' : ' <span style="color:#7dff9a">▼</span>';
+    const arrow = trend[l.i] > 0 ? ' <span style="color:#ff8a80">▲</span>' : trend[l.i] < 0 ? ' <span style="color:#7dff9a">▼</span>' : "";
     return `<span style="${l.done ? "opacity:.35;text-decoration:line-through" : ""}${saleMult < 1 && !l.done ? ";color:#7dff9a" : ""}">${CATALOG[l.i].emoji} ${fmt(price(l.i))}${l.done ? "" : arrow}</span>`;
   }).join(" &nbsp; ");
-  const buffs = `${speedT > 0 ? " ⚡" : ""}${shield > 0 ? " 🛡️" : ""}`;
+  const buffs = `${speedT > 0 ? " ⚡" : ""}${shield > 0 ? " 🛡️" : ""}${taskT > 0 ? ` 👮${Math.ceil(taskT)}s` : ""}`;
   const recipeName = recipe ? `${recipe.emoji} ${recipe.name}` : "";
   hud.innerHTML =
     `<div>👤 ${esc(me.name)}<br>💰 ${fmt(Math.max(budget, 0))}${buffs}</div>` +
@@ -690,10 +819,23 @@ function drawHud() {
   hud.style.fontSize = narrow ? "13px" : "16px";
   const hudBottom = hud.getBoundingClientRect().bottom;
   const controlsTop = hudBottom + 8;               // small touch buttons sit here
-  const freeTop = touch.enabled && (state === "playing" || state === "paused") ? controlsTop + 48 : hudBottom;
+  // On touch screens keep the strip under the small buttons clear at all times,
+  // including while the recipe screen lays out the next market.
+  const freeTop = touch.enabled ? controlsTop + 48 : hudBottom;
   banner.style.top = `${freeTop + 6}px`;
-  topReserve = (freeTop + 8) / ppu;
-  bottomReserve = (touch.enabled ? touch.bottomSpace : 40) / ppu;
+  const W = window.innerWidth, H = window.innerHeight;
+  const tall = H > W;
+  // Tall phones keep full-width strips clear; wide phones are short, so only
+  // the two button corners are kept clear and the rest stays playable.
+  topReserve = ((tall ? freeTop : hudBottom) + 8) / ppu;
+  bottomReserve = (touch.enabled && tall ? touch.bottomSpace : 40) / ppu;
+  const box = (px0, py0, px1, py1) => ({
+    x0: camera.left + (px0 / W) * (camera.right - camera.left),
+    x1: camera.left + (px1 / W) * (camera.right - camera.left),
+    y0: camera.top - (py1 / H) * (camera.top - camera.bottom),
+    y1: camera.top - (py0 / H) * (camera.top - camera.bottom),
+  });
+  noGo = touch.enabled ? [box(W - 170, controlsTop - 8, W, controlsTop + 52), box(W - 210, H - 140, W, H)] : [];
   hint.style.bottom = touch.enabled ? "150px" : "34px";
   hag.style.bottom = touch.enabled ? "150px" : "90px";
   hagHelp.textContent = touch.enabled ? "Tap LOCK! to lock the price · ✕ to walk away" : "Press SPACE to lock the price · ESC to walk away";
@@ -750,6 +892,7 @@ window.addEventListener("keydown", (e) => {
   if (MOVE_KEYS.includes(k)) touch.enable(false); // keyboard player: hide the touch buttons
   keys[k] = true;
   if (e.repeat) return;
+  if (state === "choosing" && ["1", "2", "3"].includes(k)) { chooseRecipe(Number(k) - 1); return; }
   if (k === " ") {
     if (state === "over") e.preventDefault();
     action();
@@ -855,6 +998,7 @@ function loop(time) {
         if (P.id === "speed") speedT = 5;
         if (P.id === "shield") shield = 1;
         if (P.id === "cash") { budget += 4000; score += 15; }
+        if (P.id === "taskforce") taskT = TASKFORCE_TIME;
         popup(P.name, power.g.position.x, power.g.position.y + 1, P.color, 20);
         burst(power.g.position.x, power.g.position.y, new THREE.Color(P.color).getHex(), 14, 6);
         sfx.power();
@@ -869,6 +1013,12 @@ function loop(time) {
       if (powerTimer <= 0) spawnPower();
     }
 
+    // task force timer
+    if (taskT > 0) {
+      taskT -= dt;
+      if (taskT <= 0) { taskT = 0; popup("Task force gone", player.position.x, player.position.y + 1, "#4d9dff", 18); }
+    }
+
     // traders
     hitCooldown -= dt;
     traders.forEach((t) => {
@@ -876,13 +1026,18 @@ function loop(time) {
       const dx = player.position.x - t.position.x, dy = player.position.y - t.position.y;
       const d = Math.hypot(dx, dy) || 1;
       let dirx = dx / d, diry = dy / d;
-      if (t.userData.flee > 0) { t.userData.flee -= dt; dirx = -dirx; diry = -diry; }
+      const hunted = taskT > 0 && !T.push; // pickpockets run from the task force
+      if (hunted) {
+        if (d < PLAYER_RADIUS + T.r) { arrest(t); return; }
+        dirx = -dirx; diry = -diry;
+      } else if (t.userData.flee > 0) { t.userData.flee -= dt; dirx = -dirx; diry = -diry; }
       // touch players get traders 10% slower: a thumb is less precise than a key
       const sp = (T.speed + round * T.grow) * (haggle ? 0.5 : 1) * (touch.enabled ? 0.9 : 1);
       t.position.x = Math.max(-(camera.right - 0.5), Math.min(camera.right - 0.5, t.position.x + dirx * sp * dt));
       t.position.y = Math.max(camera.bottom + 0.5, Math.min(playerMaxY(), t.position.y + diry * sp * dt));
-      if (d < PLAYER_RADIUS + T.r && hitCooldown <= 0 && t.userData.flee <= 0) hitPlayer(t, dx / d, dy / d);
+      if (!hunted && d < PLAYER_RADIUS + T.r && hitCooldown <= 0 && t.userData.flee <= 0) hitPlayer(t, dx / d, dy / d);
     });
+    for (let k = traders.length - 1; k >= 0; k--) if (traders[k].userData.arrested) traders.splice(k, 1);
 
     // round complete / game over
     if (list.every((l) => l.done)) {
@@ -892,8 +1047,7 @@ function loop(time) {
       score += 100 + Math.floor(Math.max(budget, 0) / 250);
       sfx.win();
       burst(0, 0, 0x7dff9a, 30, 9);
-      newRound();
-      flash(`${cooked.emoji} ${cooked.name} done! +${fmt(ROUND_BONUS)} 💪`, "#7dff9a");
+      newRound(cooked); // shows the recipe choice for the next round
     } else if (budget <= 0) {
       budget = 0; state = "over";
       cancelHaggle(false);
@@ -925,6 +1079,9 @@ function loop(time) {
 
   shieldRing.visible = shield > 0;
   shieldRing.rotation.z += dt * 2;
+  // task force: a flashing red and blue ring, quicker in the last 2 seconds
+  policeRing.visible = taskT > 0;
+  if (taskT > 0) policeRing.material.color.set(Math.floor(time / (taskT < 2 ? 90 : 180)) % 2 ? 0xff3b3b : 0x3b82ff);
   const pulse = (1 + Math.sin(time / 300) * 0.04) * PLAYER_RADIUS;
   player.scale.set(pulse, pulse, 1);
 
