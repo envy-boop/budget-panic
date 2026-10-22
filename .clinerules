@@ -1,0 +1,1 @@
+For Amp agent calls, load `AMP_API_KEY` from the repository-root `.env` file, the same environment-variable pattern intended for `ZIKI_API_KEY`. Never print, log, or expose its value. Use it only in the authorization header for the requested Amp API call.

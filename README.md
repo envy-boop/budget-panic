@@ -8,7 +8,7 @@ Built by Eniola with three.js.
 
 ## How to play
 
-You are a shopper in a Nigerian market. Each round gives you a recipe (like Jollof Rice or Stew & Rice) and a shopping list.
+You are a shopper in a Nigerian market. Before each round you **choose what to cook** (like Jollof Rice or Stew & Rice). Each choice shows its ingredients and roughly what it will cost, so you can plan around your money. Press **1**, **2** or **3**, or tap a recipe on a phone.
 
 1. Walk to an item with a gold ring. Items on your list have the ring.
 2. Stand close and press **Space**. A haggle bar starts sliding.
@@ -19,16 +19,19 @@ You are a shopper in a Nigerian market. Each round gives you a recipe (like Joll
 4. Buy every item on the list to finish the round. You get bonus money and a harder round.
 5. Run out of money and it's over.
 
-**Watch out for:**
+**Watch out for:** the market gets busier one round at a time, and the recipe screen tells you when something new arrives.
 
-- **Impulse buys.** Touching an item that is not on your list costs you full price.
-- **Traders.** They chase you and take your money. There are four kinds: grunt, sprinter, tank and pickpocket. A hit also ruins any haggle in progress.
-- **Moving prices.** ▲ means the price is going up, ▼ means it is dropping.
-- **Rising prices.** Everything gets a bit more expensive as the round goes on.
-- **Mama's calls.** Mama sometimes phones with one more thing to buy.
-- **Market events** from round 2: fuel price hike, NEPA taking light, rain, and flash sales.
+| Round | What's new |
+| --- | --- |
+| 1 | Two traders chase you. Prices stay put. |
+| 2 | A sprinter joins. **Moving prices:** ▲ means a price is going up, ▼ means it's dropping. |
+| 3 | **Mama's calls** (one more thing to buy) and **market events:** fuel price hike, NEPA taking light, rain, flash sales. |
+| 4 | **Pickpockets** 🥷 steal and run. |
+| 5+ | More traders: a tank, then another grunt, sprinter and tank. |
 
-**Power-ups:** ⚡ speed boost, 🛡️ shield that blocks one hit, 💰 cash.
+Always on: **impulse buys** (touching an item that is not on your list costs full price), **traders** that take your money and ruin any haggle in progress, and prices that **rise a little** as the round goes on.
+
+**Power-ups:** ⚡ speed boost, 🛡️ shield that blocks one hit, 💰 cash, and 👮 **task force**. The task force only shows up while a pickpocket is in the market. For 8 seconds the pickpockets panic and run from you; catch one and it's arrested (gone for the round), you get back what the pickpockets stole that round, and +50 points.
 
 ## Controls
 
